@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+.env.*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Data protection
+data/raw/
+data/internal/
+data/*_raw*.csv
+data/data_persoane.csv
+data/data_auto.csv
+src/transformation_auto.py
+src/transformation_persons.py
+sql/aggregation_auto.sql
+sql/aggregation_persons.sql
