@@ -1,58 +1,67 @@
-/* =========================================================
-   Conceptual SQL: Hourly aggregation of vehicle crossings
-   Purpose: Feature engineering for ML models
-   Note: This query illustrates aggregation logic only.
-   ========================================================= */
+/*
+CONCEPT: Hourly vehicle traffic dataset (synthetic dataset is exported later as CSV)
+
+Goal:
+- Produce a complete hourly panel: (PTF × date × hour)
+- Aggregate counts by direction and by vehicle category
+- Keep logic portable (schema/table names are placeholders)
+
+Assumptions:
+- fact_crossings: transactional fact table with at least:
+  id, pctf, cross_date (date), cross_time (time/timestamp), direction, vehicle_type, is_driver
+- direction values: 'INTRARE' / 'IESIRE'
+- vehicle_type codes are mapped to categories:
+  Cars:        ('B','B1','B2')
+  Buses:       ('D','D1','DE','D1E')
+  Light trucks:('C1','C1E')
+  Trucks:      ('C','CE')
+*/
 
 WITH hours AS (
     SELECT generate_series(0, 23) AS hour
 ),
 dates AS (
-    SELECT generate_series(:start_date::date, :end_date::date, '1 day') AS data
+    SELECT generate_series(DATE '2022-12-01', DATE '2025-11-30', INTERVAL '1 day')::date AS dt
 ),
 pctf AS (
     SELECT DISTINCT pctf
-    FROM dim_pctf
-    -- Example exclusion of non-road checkpoints
-    WHERE pctf_type = 'ROAD'
+    FROM fact_crossings
+    WHERE pctf NOT IN ('EXAMPLE_PCTF_1','EXAMPLE_PCTF_2')
 )
-
 SELECT
     p.pctf,
-    d.data,
-    EXTRACT(ISODOW FROM d.data) AS day_of_week,
+    d.dt AS date,
+    EXTRACT(ISODOW FROM d.dt) AS day_of_week,
     h.hour,
 
-    -- Total vehicle flow
-    SUM(CASE WHEN f.direction = 'IN'  THEN 1 ELSE 0 END) AS vehicles_in,
-    SUM(CASE WHEN f.direction = 'OUT' THEN 1 ELSE 0 END) AS vehicles_out,
+    /* Direction totals */
+    SUM(CASE WHEN f.direction = 'INTRARE' THEN 1 ELSE 0 END) AS in_count,
+    SUM(CASE WHEN f.direction = 'IESIRE'  THEN 1 ELSE 0 END) AS out_count,
 
-    -- Vehicle categories
-    SUM(CASE WHEN f.direction = 'IN'  AND f.vehicle_type IN ('CAR') THEN 1 ELSE 0 END) AS car_in,
-    SUM(CASE WHEN f.direction = 'OUT' AND f.vehicle_type IN ('CAR') THEN 1 ELSE 0 END) AS car_out,
+    /* Vehicle categories - IN */
+    SUM(CASE WHEN f.direction = 'INTRARE' AND f.vehicle_type IN ('B','B1','B2') THEN 1 ELSE 0 END) AS car_in,
+    SUM(CASE WHEN f.direction = 'INTRARE' AND f.vehicle_type IN ('D','D1','DE','D1E') THEN 1 ELSE 0 END) AS bus_in,
+    SUM(CASE WHEN f.direction = 'INTRARE' AND f.vehicle_type IN ('C1','C1E') THEN 1 ELSE 0 END) AS light_trucks_in,
+    SUM(CASE WHEN f.direction = 'INTRARE' AND f.vehicle_type IN ('C','CE') THEN 1 ELSE 0 END) AS trucks_in,
 
-    SUM(CASE WHEN f.direction = 'IN'  AND f.vehicle_type IN ('BUS') THEN 1 ELSE 0 END) AS bus_in,
-    SUM(CASE WHEN f.direction = 'OUT' AND f.vehicle_type IN ('BUS') THEN 1 ELSE 0 END) AS bus_out,
+    /* Vehicle categories - OUT */
+    SUM(CASE WHEN f.direction = 'IESIRE'  AND f.vehicle_type IN ('B','B1','B2') THEN 1 ELSE 0 END) AS car_out,
+    SUM(CASE WHEN f.direction = 'IESIRE'  AND f.vehicle_type IN ('D','D1','DE','D1E') THEN 1 ELSE 0 END) AS bus_out,
+    SUM(CASE WHEN f.direction = 'IESIRE'  AND f.vehicle_type IN ('C1','C1E') THEN 1 ELSE 0 END) AS light_trucks_out,
+    SUM(CASE WHEN f.direction = 'IESIRE'  AND f.vehicle_type IN ('C','CE') THEN 1 ELSE 0 END) AS trucks_out,
 
-    SUM(CASE WHEN f.direction = 'IN'  AND f.vehicle_type IN ('LIGHT_TRUCK') THEN 1 ELSE 0 END) AS light_truck_in,
-    SUM(CASE WHEN f.direction = 'OUT' AND f.vehicle_type IN ('LIGHT_TRUCK') THEN 1 ELSE 0 END) AS light_truck_out,
-
-    SUM(CASE WHEN f.direction = 'IN'  AND f.vehicle_type IN ('TRUCK') THEN 1 ELSE 0 END) AS truck_in,
-    SUM(CASE WHEN f.direction = 'OUT' AND f.vehicle_type IN ('TRUCK') THEN 1 ELSE 0 END) AS truck_out,
-
-    COUNT(f.event_id) AS total_vehicles
+    /* Total vehicles (all directions) */
+    COUNT(f.id) AS total
 
 FROM pctf p
 CROSS JOIN dates d
 CROSS JOIN hours h
 LEFT JOIN fact_crossings f
     ON f.pctf = p.pctf
-   AND f.crossing_date = d.data
-   AND EXTRACT(HOUR FROM f.crossing_time) = h.hour
-   AND f.is_driver = TRUE
-
+   AND f.cross_date = d.dt
+   AND EXTRACT(HOUR FROM f.cross_time) = h.hour
+   AND f.is_driver = TRUE     -- include only vehicle records (driver=vehicle indicator)
 GROUP BY
-    p.pctf, d.data, day_of_week, h.hour
-
+    p.pctf, d.dt, day_of_week, h.hour
 ORDER BY
-    p.pctf, d.data, h.hour;
+    p.pctf, d.dt, h.hour;
