@@ -1,5 +1,5 @@
-from src.forecasting.io import load_hourly_csv
-from src.forecasting.data_quality import (
+from src.forecasting_hourly.io import load_hourly_csv
+from src.forecasting_hourly.data_quality import (
     check_missing_values,
     check_negative_values,
     check_hour_range,
