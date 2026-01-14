@@ -60,8 +60,11 @@ LEFT JOIN fact_crossings f
     ON f.pctf = p.pctf
    AND f.cross_date = d.dt
    AND EXTRACT(HOUR FROM f.cross_time) = h.hour
-   AND f.is_driver = TRUE     -- include only vehicle records (driver=vehicle indicator)
+   AND f.is_driver = TRUE                           -- include only vehicle records (driver=vehicle indicator)
 GROUP BY
     p.pctf, d.dt, day_of_week, h.hour
 ORDER BY
     p.pctf, d.dt, h.hour;
+
+
+
