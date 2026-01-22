@@ -15,6 +15,8 @@ import numpy as np
 import pandas as pd
 
 from prophet import Prophet
+from datetime import date, datetime, timedelta, timezone
+from typing import List
 
 # Project-specific imports
 from src.forecasting_daily.io_daily import load_daily_csv
@@ -73,6 +75,74 @@ def select_targets_daily(kind: str) -> list[str]:
         return ["intrare_day", "iesire_day"]
     raise ValueError("kind must be 'auto' or 'people'")
 
+# ----------------------------
+# Holidays (in-code)
+# ----------------------------
+
+def orthodox_easter_sunday(year: int) -> date:
+    """
+    Orthodox Easter Sunday (Julian->Gregorian) algorithm.
+    Returns Gregorian calendar date.
+    Valid for years 1900-2099 with the +13 days shift.
+    """
+    a = year % 4
+    b = year % 7
+    c = year % 19
+    d = (19 * c + 15) % 30
+    e = (2 * a + 4 * b - d + 34) % 7
+    month = (d + e + 114) // 31
+    day = ((d + e + 114) % 31) + 1
+
+    # Convert Julian date to Gregorian by +13 days (1900-2099)
+    julian_date_gregorian = date(year, month, day) + timedelta(days=13)
+
+    # Next Sunday
+    return julian_date_gregorian + timedelta(days=(7 - julian_date_gregorian.weekday()) % 7)
+
+
+def build_holidays_df(start_year: int, end_year: int) -> pd.DataFrame:
+    """
+    Prophet holidays dataframe:
+      columns: holiday, ds, lower_window, upper_window
+
+    Included:
+      - winter_holidays: 25 Dec .. 07 Jan (as one event starting on 25 Dec, window +13)
+      - august_national_days: 27 Aug .. 31 Aug (window +4)
+      - orthodox_easter: Good Friday .. Easter Monday (-2 .. +1 around Easter Sunday)
+    """
+    rows: List[dict] = []
+
+    for y in range(start_year, end_year + 1):
+        rows.append(
+            {
+                "holiday": "winter_holidays",
+                "ds": pd.to_datetime(date(y, 12, 25)),
+                "lower_window": 0,
+                "upper_window": 13,
+            }
+        )
+
+        rows.append(
+            {
+                "holiday": "august_national_days",
+                "ds": pd.to_datetime(date(y, 8, 27)),
+                "lower_window": 0,
+                "upper_window": 4,
+            }
+        )
+
+        easter = orthodox_easter_sunday(y)
+        rows.append(
+            {
+                "holiday": "orthodox_easter",
+                "ds": pd.to_datetime(easter),
+                "lower_window": -2,
+                "upper_window": 1,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
 # ============================================================
 # Prophet model configuration
 # ============================================================
@@ -90,12 +160,34 @@ def fit_prophet_daily(train_ds_y: pd.DataFrame) -> Prophet:
         - yearly seasonality enabled
         - smooth trend changes
     """
+    #m = Prophet(
+    #    daily_seasonality=False,            # no intra-day patterns (daily data)
+    #    weekly_seasonality=True,            # weekday/weekend effects
+    #    yearly_seasonality=True,            # annual seasonality
+    #    changepoint_prior_scale=0.05,       # conservative trend flexibility
+    #)
+    min_y = pd.to_datetime(train_ds_y["ds"]).min().year
+    max_y = pd.to_datetime(train_ds_y["ds"]).max().year
+    holidays_df = build_holidays_df(min_y, max_y + 2)
+
     m = Prophet(
-        daily_seasonality=False,            # no intra-day patterns (daily data)
-        weekly_seasonality=True,            # weekday/weekend effects
-        yearly_seasonality=True,            # annual seasonality
-        changepoint_prior_scale=0.05,       # conservative trend flexibility
+        daily_seasonality=False,
+        weekly_seasonality=True,
+        yearly_seasonality=True,
+        seasonality_mode="multiplicative",
+        changepoint_prior_scale=0.05,
+        interval_width=0.80,
+        holidays=holidays_df,
     )
+
+    # Add monthly seasonality (approximately 30.5 days)
+    m.add_seasonality(
+        name="monthly",
+        period=30.5,
+        fourier_order=5
+    )
+
+
     m.fit(train_ds_y)
     return m
 
